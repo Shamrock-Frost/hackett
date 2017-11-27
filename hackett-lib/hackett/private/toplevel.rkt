@@ -61,17 +61,17 @@
 
 (require (for-syntax racket/base
                      racket/match
+                     (only-in racket/syntax generate-temporary)
                      syntax/kerncase
                      threading
-
                      hackett/private/typecheck)
          racket/promise
          syntax/parse/define
-
          hackett/private/type-reqprov
          (only-in hackett/private/base τ⇒! τ⇐!)
-         (only-in (unmangle-types-in #:no-introduce hackett/private/kernel) String [#%app @%app])
-         (only-in hackett/private/prim/base show))
+         (only-in (unmangle-types-in #:no-introduce hackett/private/kernel) def String [#%app @%app])
+         (only-in (unmangle-types-in #:prefix t: hackett/private/prim/type) t:IO t:Unit)
+         (only-in hackett/private/prim/base show unsafe-run-io!))
 
 (provide @%top-interaction)
 
@@ -90,6 +90,18 @@
   [(_ . (#:type ~! expr:expr))
    (match-let-values ([(_ τ_e) (τ⇒! #'expr)])
      #`(type-result '#,(τ->string (apply-current-subst τ_e))))]
+  [(_ . (#:run ~! expr:expr))
+     (τ⇐! #'expr (τ:app (parse-type #'t:IO) (parse-type #'t:Unit)))
+     #'(begin (force (@%app unsafe-run-io! expr)) (void))]
+  [(_ . (#:<- ~! id:id expr:expr))
+     (match-let-values ([(e- τ_e) (τ⇒! #'expr)])
+       (match τ_e
+         [(τ:app τ_fn τ_arg) #:when (τ=? τ_fn (parse-type #'t:IO))
+          (let ([e-/exec (τ⇐! (quasisyntax/loc this-syntax
+                                               (@%app unsafe-run-io! #,e-))
+                              τ_arg)])
+               #`(@%top-interaction begin (def id #,e-/exec) id))]
+         [_ #`(format "error: ~a is not an (IO _)" #,(τ->string (apply-current-subst τ_e)))]))]
   [(_ . form)
    (syntax-parse (local-expand #'form 'top-level (kernel-form-identifier-list))
      #:context this-syntax
